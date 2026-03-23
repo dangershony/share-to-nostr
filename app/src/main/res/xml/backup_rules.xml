@@ -1,6 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+    Backup rules for Android Auto Backup.
+    Only back up shared preferences (settings).
+    Exclude everything else (downloaded videos, cache).
+-->
 <full-backup-content>
     <include domain="sharedpref" path="." />
-    <exclude domain="no_backup" path="." />
-    <exclude domain="cache" path="." />
 </full-backup-content>
