@@ -5,7 +5,6 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.util.Log
-import androidx.activity.result.ActivityResultLauncher
 
 /**
  * Handles communication with Amber (NIP-55) for Nostr event signing.

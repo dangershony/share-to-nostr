@@ -35,7 +35,7 @@ class VideoDownloader(private val context: Context) {
         VideoInfo(
             title = info.title ?: "Untitled",
             thumbnailUrl = info.thumbnail,
-            duration = info.duration?.toLong() ?: 0,
+            duration = info.duration.toLong(),
             url = url,
             uploaderName = info.uploader,
             description = info.description
@@ -70,8 +70,8 @@ class VideoDownloader(private val context: Context) {
         }
 
         Log.d(TAG, "Starting download: $url")
-        YoutubeDL.getInstance().execute(request) { progress, eta ->
-            Log.d(TAG, "Download progress: $progress% ETA: ${eta}s")
+        YoutubeDL.getInstance().execute(request) { progress, eta, line ->
+            Log.d(TAG, "Download progress: $progress% ETA: ${eta}s [$line]")
             onProgress(progress, eta)
         }
 
