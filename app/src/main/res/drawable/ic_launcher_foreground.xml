@@ -1,0 +1,14 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Purple circle background -->
+    <path
+        android:fillColor="#7B1FA2"
+        android:pathData="M54,54m-40,0a40,40 0,1 1,80 0a40,40 0,1 1,-80 0" />
+    <!-- Share arrow icon -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,34L54,34L44,44L47,47L52,42L52,62L56,62L56,42L61,47L64,44ZM38,58L38,66C38,68.2 39.8,70 42,70L66,70C68.2,70 70,68.2 70,66L70,58L66,58L66,66L42,66L42,58Z" />
+</vector>
