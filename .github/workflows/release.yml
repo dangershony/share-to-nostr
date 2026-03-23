@@ -1,0 +1,136 @@
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      create_release:
+        description: 'Create a GitHub release'
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build APKs
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Decode keystore
+        if: env.KEYSTORE_BASE64 != ''
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          echo "$KEYSTORE_BASE64" | base64 -d > app/release.keystore
+
+      - name: Build release APKs
+        env:
+          KEYSTORE_FILE: ${{ secrets.KEYSTORE_BASE64 != '' && 'release.keystore' || '' }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          if [ -n "$KEYSTORE_FILE" ]; then
+            echo "Building signed release APKs"
+            ./gradlew assembleRelease \
+              -Pandroid.injected.signing.store.file=$PWD/app/release.keystore \
+              -Pandroid.injected.signing.store.password="$KEYSTORE_PASSWORD" \
+              -Pandroid.injected.signing.key.alias="$KEY_ALIAS" \
+              -Pandroid.injected.signing.key.password="$KEY_PASSWORD"
+          else
+            echo "No keystore configured - building debug APKs"
+            ./gradlew assembleDebug
+          fi
+
+      - name: Gather APKs
+        id: gather
+        run: |
+          mkdir -p artifacts
+
+          BUILD_TYPE="release"
+          if [ ! -d "app/build/outputs/apk/release" ]; then
+            BUILD_TYPE="debug"
+          fi
+
+          echo "build_type=$BUILD_TYPE" >> "$GITHUB_OUTPUT"
+
+          # Copy APKs with descriptive names
+          for apk in app/build/outputs/apk/$BUILD_TYPE/*.apk; do
+            filename=$(basename "$apk")
+            cp "$apk" "artifacts/$filename"
+          done
+
+          ls -lh artifacts/
+          echo "apk_count=$(ls artifacts/*.apk | wc -l)" >> "$GITHUB_OUTPUT"
+
+      - name: Upload APKs as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: share-to-nostr-apks
+          path: artifacts/*.apk
+          retention-days: 90
+
+      - name: Get version info
+        id: version
+        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && github.event.inputs.create_release == 'true')
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/}"
+          else
+            VERSION="v$(date +%Y%m%d-%H%M%S)"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Version: $VERSION"
+
+      - name: Create GitHub Release
+        if: steps.version.outputs.version != ''
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.version }}
+          name: Share to Nostr ${{ steps.version.outputs.version }}
+          body: |
+            ## Share to Nostr ${{ steps.version.outputs.version }}
+
+            ### APKs
+
+            | File | Description |
+            |------|-------------|
+            | `app-arm64-v8a-${{ steps.gather.outputs.build_type }}.apk` | For modern phones (most devices) |
+            | `app-armeabi-v7a-${{ steps.gather.outputs.build_type }}.apk` | For older 32-bit ARM phones |
+            | `app-x86_64-${{ steps.gather.outputs.build_type }}.apk` | For x86_64 emulators |
+            | `app-x86-${{ steps.gather.outputs.build_type }}.apk` | For x86 emulators |
+            | `app-universal-${{ steps.gather.outputs.build_type }}.apk` | Works on all devices (larger file) |
+
+            > **Most users should download `app-arm64-v8a-${{ steps.gather.outputs.build_type }}.apk`**.
+            > If unsure, use the universal APK.
+
+            ### Requirements
+            - Android 8.0+ (API 26)
+            - [Amber](https://github.com/greenart7c3/Amber) for Nostr signing
+            - A Blossom media server
+
+            ### Install
+            1. Download the APK for your device
+            2. Enable "Install from unknown sources" if prompted
+            3. Install and open the app
+            4. Configure your Blossom server and connect to Amber in Settings
+          generate_release_notes: true
+          files: artifacts/*.apk
+          draft: false
+          prerelease: ${{ steps.gather.outputs.build_type == 'debug' }}
