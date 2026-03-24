@@ -123,10 +123,19 @@ class ShareReceiverActivity : ComponentActivity() {
 
     /**
      * Fetch video metadata (title, thumbnail, duration) using yt-dlp.
+     * Waits for yt-dlp initialization to complete before proceeding.
      */
     private suspend fun fetchVideoInfo(url: String) {
         try {
             shareJob = shareJob.copy(state = ShareState.FETCHING_INFO)
+
+            // Wait for yt-dlp to be initialized
+            val app = application as ShareToNostrApp
+            val initialized = app.ytDlpReady.await()
+            if (!initialized) {
+                throw Exception("yt-dlp failed to initialize")
+            }
+
             val info = videoDownloader.getVideoInfo(url)
             shareJob = shareJob.copy(
                 title = info.title,
@@ -164,6 +173,13 @@ class ShareReceiverActivity : ComponentActivity() {
         var downloadedFile: File? = null
 
         try {
+            // Wait for yt-dlp to be initialized
+            val app = application as ShareToNostrApp
+            val initialized = app.ytDlpReady.await()
+            if (!initialized) {
+                throw Exception("yt-dlp failed to initialize. Please restart the app.")
+            }
+
             // Step 1: Download the video
             shareJob = shareJob.copy(state = ShareState.DOWNLOADING, progress = 0f)
             downloadedFile = videoDownloader.download(
