@@ -1,5 +1,8 @@
 package com.sharetonostr
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import android.widget.Toast
@@ -14,6 +17,7 @@ import com.sharetonostr.nostr.AmberSigner
 import com.sharetonostr.ui.screens.SettingsScreen
 import com.sharetonostr.ui.theme.ShareToNostrTheme
 import com.sharetonostr.download.VideoDownloader
+import com.sharetonostr.util.LogCollector
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
@@ -132,6 +136,26 @@ class MainActivity : ComponentActivity() {
                                 Toast.makeText(
                                     this@MainActivity,
                                     "Update failed: ${e.message}",
+                                    Toast.LENGTH_LONG
+                                ).show()
+                            }
+                        }
+                    },
+                    onCopyLogs = {
+                        lifecycleScope.launch {
+                            try {
+                                val logs = LogCollector.collectLogs()
+                                val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                clipboard.setPrimaryClip(ClipData.newPlainText("Share to Nostr Logs", logs))
+                                Toast.makeText(
+                                    this@MainActivity,
+                                    "Logs copied to clipboard",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            } catch (e: Exception) {
+                                Toast.makeText(
+                                    this@MainActivity,
+                                    "Failed to copy logs: ${e.message}",
                                     Toast.LENGTH_LONG
                                 ).show()
                             }

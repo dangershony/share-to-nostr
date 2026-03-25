@@ -31,7 +31,8 @@ fun SettingsScreen(
     onConnectAmber: () -> Unit,
     onDisconnectAmber: () -> Unit,
     onSetMaxResolution: (String) -> Unit,
-    onUpdateYtDlp: () -> Unit
+    onUpdateYtDlp: () -> Unit,
+    onCopyLogs: () -> Unit = {}
 ) {
     var showAddServerDialog by remember { mutableStateOf(false) }
     var showAddRelayDialog by remember { mutableStateOf(false) }
@@ -229,6 +230,36 @@ fun SettingsScreen(
                             Icon(Icons.Default.Update, null)
                             Spacer(Modifier.width(4.dp))
                             Text("Update")
+                        }
+                    }
+                }
+            }
+
+            // --- Debug Section ---
+            item {
+                SectionHeader("Debug")
+            }
+
+            item {
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Copy Logs", style = MaterialTheme.typography.titleSmall)
+                            Text(
+                                "Copy recent app logs to clipboard for troubleshooting",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        FilledTonalButton(onClick = onCopyLogs) {
+                            Icon(Icons.Default.ContentCopy, null)
+                            Spacer(Modifier.width(4.dp))
+                            Text("Copy")
                         }
                     }
                 }
