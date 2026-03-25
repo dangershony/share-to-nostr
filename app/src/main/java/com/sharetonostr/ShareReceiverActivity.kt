@@ -131,7 +131,13 @@ class ShareReceiverActivity : ComponentActivity() {
 
             // Wait for yt-dlp to be initialized
             val app = application as ShareToNostrApp
-            val initialized = app.ytDlpReady.await()
+            var initialized = app.ytDlpReady.await()
+            if (!initialized) {
+                // Retry once before giving up
+                Log.w(TAG, "yt-dlp init failed, retrying...")
+                app.retryInitYoutubeDL()
+                initialized = app.ytDlpReady.await()
+            }
             if (!initialized) {
                 throw Exception("yt-dlp failed to initialize")
             }
@@ -175,9 +181,15 @@ class ShareReceiverActivity : ComponentActivity() {
         try {
             // Wait for yt-dlp to be initialized
             val app = application as ShareToNostrApp
-            val initialized = app.ytDlpReady.await()
+            var initialized = app.ytDlpReady.await()
             if (!initialized) {
-                throw Exception("yt-dlp failed to initialize. Please restart the app.")
+                // Retry before giving up
+                Log.w(TAG, "yt-dlp init failed before share flow, retrying...")
+                app.retryInitYoutubeDL()
+                initialized = app.ytDlpReady.await()
+            }
+            if (!initialized) {
+                throw Exception("yt-dlp failed to initialize. Please check app permissions and storage, then restart the app.")
             }
 
             // Step 1: Download the video
