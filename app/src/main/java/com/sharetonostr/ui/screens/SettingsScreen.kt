@@ -32,7 +32,8 @@ fun SettingsScreen(
     onDisconnectAmber: () -> Unit,
     onSetMaxResolution: (String) -> Unit,
     onUpdateYtDlp: () -> Unit,
-    onCopyLogs: () -> Unit = {}
+    onCopyLogs: () -> Unit = {},
+    onDeleteLogs: () -> Unit = {}
 ) {
     var showAddServerDialog by remember { mutableStateOf(false) }
     var showAddRelayDialog by remember { mutableStateOf(false) }
@@ -260,6 +261,12 @@ fun SettingsScreen(
                             Icon(Icons.Default.ContentCopy, null)
                             Spacer(Modifier.width(4.dp))
                             Text("Copy")
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        FilledTonalButton(onClick = onDeleteLogs) {
+                            Icon(Icons.Default.Delete, null)
+                            Spacer(Modifier.width(4.dp))
+                            Text("Delete")
                         }
                     }
                 }
