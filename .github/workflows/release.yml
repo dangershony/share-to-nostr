@@ -47,23 +47,53 @@ jobs:
         run: |
           echo "$KEYSTORE_BASE64" | base64 -d > app/release.keystore
 
+      - name: Compute version from tag
+        id: compute_version
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            TAG="${GITHUB_REF#refs/tags/v}"
+          else
+            TAG="0.0.0"
+          fi
+          # Parse major.minor.patch from tag (e.g. 0.1.5)
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$TAG"
+          MAJOR=${MAJOR:-0}
+          MINOR=${MINOR:-0}
+          PATCH=${PATCH:-0}
+          # Compute a unique versionCode: major*10000 + minor*100 + patch
+          VERSION_CODE=$(( MAJOR * 10000 + MINOR * 100 + PATCH ))
+          # Ensure versionCode is at least 1
+          if [ "$VERSION_CODE" -lt 1 ]; then
+            VERSION_CODE=1
+          fi
+          VERSION_NAME="$MAJOR.$MINOR.$PATCH"
+          echo "version_code=$VERSION_CODE" >> "$GITHUB_OUTPUT"
+          echo "version_name=$VERSION_NAME" >> "$GITHUB_OUTPUT"
+          echo "Computed versionCode=$VERSION_CODE, versionName=$VERSION_NAME from tag=$TAG"
+
       - name: Build release APKs
         env:
           KEYSTORE_FILE: ${{ secrets.KEYSTORE_BASE64 != '' && 'release.keystore' || '' }}
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          VERSION_CODE: ${{ steps.compute_version.outputs.version_code }}
+          VERSION_NAME: ${{ steps.compute_version.outputs.version_name }}
         run: |
           if [ -n "$KEYSTORE_FILE" ]; then
-            echo "Building signed release APKs"
+            echo "Building signed release APKs (versionCode=$VERSION_CODE, versionName=$VERSION_NAME)"
             ./gradlew assembleRelease \
+              -PVERSION_CODE="$VERSION_CODE" \
+              -PVERSION_NAME="$VERSION_NAME" \
               -Pandroid.injected.signing.store.file=$PWD/app/release.keystore \
               -Pandroid.injected.signing.store.password="$KEYSTORE_PASSWORD" \
               -Pandroid.injected.signing.key.alias="$KEY_ALIAS" \
               -Pandroid.injected.signing.key.password="$KEY_PASSWORD"
           else
             echo "No keystore configured - building debug APKs"
-            ./gradlew assembleDebug
+            ./gradlew assembleDebug \
+              -PVERSION_CODE="$VERSION_CODE" \
+              -PVERSION_NAME="$VERSION_NAME"
           fi
 
       - name: Gather APKs
