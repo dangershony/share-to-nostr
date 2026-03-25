@@ -10,6 +10,13 @@ import java.io.InputStreamReader
 object LogCollector {
 
     /**
+     * Clear the entire logcat buffer.
+     */
+    fun clearLogs() {
+        Runtime.getRuntime().exec(arrayOf("logcat", "-c")).waitFor()
+    }
+
+    /**
      * Capture the last [lines] log lines from this app's process.
      * Filters to common app tags plus any warnings/errors.
      */

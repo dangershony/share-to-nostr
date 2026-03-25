@@ -20,6 +20,8 @@ import com.sharetonostr.download.VideoDownloader
 import com.sharetonostr.util.LogCollector
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
 
 class MainActivity : ComponentActivity() {
 
@@ -156,6 +158,24 @@ class MainActivity : ComponentActivity() {
                                 Toast.makeText(
                                     this@MainActivity,
                                     "Failed to copy logs: ${e.message}",
+                                    Toast.LENGTH_LONG
+                                ).show()
+                            }
+                        }
+                    },
+                    onDeleteLogs = {
+                        lifecycleScope.launch {
+                            try {
+                                withContext(Dispatchers.IO) { LogCollector.clearLogs() }
+                                Toast.makeText(
+                                    this@MainActivity,
+                                    "Logs cleared",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            } catch (e: Exception) {
+                                Toast.makeText(
+                                    this@MainActivity,
+                                    "Failed to clear logs: ${e.message}",
                                     Toast.LENGTH_LONG
                                 ).show()
                             }
