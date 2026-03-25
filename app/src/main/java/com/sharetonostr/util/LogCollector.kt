@@ -1,6 +1,8 @@
 package com.sharetonostr.util
 
 import android.os.Build
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.io.BufferedReader
 import java.io.InputStreamReader
 
@@ -19,9 +21,12 @@ object LogCollector {
     /**
      * Capture the last [lines] log lines from this app's process.
      * Filters to common app tags plus any warnings/errors.
+     *
+     * This is a suspend function that runs the blocking logcat I/O on [Dispatchers.IO]
+     * so it is safe to call from a main-thread coroutine without blocking the UI.
      */
-    fun collectLogs(lines: Int = 500): String {
-        return try {
+    suspend fun collectLogs(lines: Int = 500): String = withContext(Dispatchers.IO) {
+        try {
             val pid = android.os.Process.myPid()
             // Get recent logs from this process only
             val process = Runtime.getRuntime().exec(
