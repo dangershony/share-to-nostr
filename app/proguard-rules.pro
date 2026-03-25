@@ -22,3 +22,12 @@
 -keepclasseswithmembers class com.sharetonostr.** {
     kotlinx.serialization.KSerializer serializer(...);
 }
+
+# youtubedl-android
+-keep class com.yausername.** { *; }
+-keep class org.apache.commons.** { *; }
+-dontwarn org.apache.commons.**
+
+# Jackson (used by youtubedl-android for JSON parsing)
+-keep class com.fasterxml.jackson.** { *; }
+-dontwarn com.fasterxml.jackson.**
