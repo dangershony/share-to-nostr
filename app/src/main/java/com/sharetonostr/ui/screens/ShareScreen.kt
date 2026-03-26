@@ -27,7 +27,8 @@ fun ShareScreen(
     pubkey: String?,
     onCaptionChanged: (String) -> Unit,
     onShare: () -> Unit,
-    onCancel: () -> Unit
+    onCancel: () -> Unit,
+    onReportError: () -> Unit = {}
 ) {
     val isConfigured = !blossomServer.isNullOrBlank() && !pubkey.isNullOrBlank()
     val isProcessing = shareJob.state != ShareState.PENDING &&
@@ -234,12 +235,34 @@ fun ShareScreen(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                if (shareJob.state == ShareState.COMPLETE || shareJob.state == ShareState.ERROR) {
+                if (shareJob.state == ShareState.COMPLETE) {
                     Button(
                         onClick = onCancel,
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text(if (shareJob.state == ShareState.COMPLETE) "Done" else "Close")
+                        Text("Done")
+                    }
+                } else if (shareJob.state == ShareState.ERROR) {
+                    OutlinedButton(
+                        onClick = onCancel,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("Close")
+                    }
+                    Button(
+                        onClick = onReportError,
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.error
+                        )
+                    ) {
+                        Icon(
+                            Icons.Default.BugReport,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Text("Report Error")
                     }
                 } else {
                     OutlinedButton(

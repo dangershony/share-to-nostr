@@ -1,6 +1,7 @@
 package com.sharetonostr
 
 import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.util.Log
 import android.widget.Toast
@@ -19,6 +20,7 @@ import com.sharetonostr.download.VideoDownloader
 import com.sharetonostr.nostr.*
 import com.sharetonostr.ui.screens.ShareScreen
 import com.sharetonostr.ui.theme.ShareToNostrTheme
+import com.sharetonostr.util.LogCollector
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.io.File
@@ -115,7 +117,12 @@ class ShareReceiverActivity : ComponentActivity() {
                             executeShareFlow()
                         }
                     },
-                    onCancel = { finish() }
+                    onCancel = { finish() },
+                    onReportError = {
+                        lifecycleScope.launch {
+                            reportError()
+                        }
+                    }
                 )
             }
         }
@@ -324,6 +331,53 @@ class ShareReceiverActivity : ComponentActivity() {
 
             val intent = amberSigner.signEventIntent(eventJson, event.id, pubkey)
             signEventLauncher.launch(intent)
+        }
+    }
+
+    /**
+     * Collect logs and open a pre-filled GitHub issue in the browser.
+     */
+    private suspend fun reportError() {
+        try {
+            val logs = LogCollector.collectLogs(200)
+
+            val title = "Bug: ${shareJob.errorMessage?.take(80) ?: "Unknown error"}"
+
+            val body = buildString {
+                appendLine("## Error")
+                appendLine("```")
+                appendLine(shareJob.errorMessage ?: "No error message")
+                appendLine("```")
+                appendLine()
+                appendLine("## Context")
+                appendLine("- **Source URL**: `${shareJob.sourceUrl}`")
+                appendLine("- **State**: `${shareJob.state}`")
+                appendLine("- **Video title**: ${shareJob.title.ifBlank { "N/A" }}")
+                appendLine()
+                appendLine("## Logs")
+                appendLine("```")
+                // GitHub issue URLs have a length limit (~8000 chars), so truncate logs
+                val maxLogLen = 4000
+                if (logs.length > maxLogLen) {
+                    appendLine(logs.takeLast(maxLogLen))
+                    appendLine("... (truncated, ${logs.length} chars total)")
+                } else {
+                    appendLine(logs)
+                }
+                appendLine("```")
+            }
+
+            val url = Uri.parse("https://github.com/dangershony/share-to-nostr/issues/new").buildUpon()
+                .appendQueryParameter("title", title)
+                .appendQueryParameter("body", body)
+                .appendQueryParameter("labels", "bug")
+                .build()
+
+            val browserIntent = Intent(Intent.ACTION_VIEW, url)
+            startActivity(browserIntent)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to open error report", e)
+            Toast.makeText(this@ShareReceiverActivity, "Failed to open error report: ${e.message}", Toast.LENGTH_LONG).show()
         }
     }
 }
