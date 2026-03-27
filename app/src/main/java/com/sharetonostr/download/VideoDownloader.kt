@@ -104,12 +104,24 @@ class VideoDownloader(private val context: Context) {
                     executeDownload(buildRequest(fallbackFormat))
                 } catch (e2: Exception) {
                     if (isFormatSortError(e2)) {
-                        // The simpler format still triggers the sort bug — update yt-dlp
-                        // (which has this fixed in newer builds) and retry with the preferred format.
+                        // Both formats trigger the sort bug — update yt-dlp and retry with
+                        // the fallback format (preferred was already tried and failed).
+                        // If the fallback still fails, try a plain "best" with no resolution
+                        // filter as a last resort.
                         Log.w(TAG, "Format sort error on fallback too; updating yt-dlp and retrying…")
                         YoutubeDL.getInstance().updateYoutubeDL(context, YoutubeDL.UpdateChannel.NIGHTLY)
                         outputDir.listFiles()?.forEach { it.delete() }
-                        executeDownload(buildRequest(preferredFormat))
+                        try {
+                            executeDownload(buildRequest(fallbackFormat))
+                        } catch (e3: Exception) {
+                            if (isFormatSortError(e3)) {
+                                Log.w(TAG, "Format sort error after update; retrying with plain best…")
+                                outputDir.listFiles()?.forEach { it.delete() }
+                                executeDownload(buildRequest("best"))
+                            } else {
+                                throw e3
+                            }
+                        }
                     } else {
                         throw e2
                     }
@@ -134,9 +146,10 @@ class VideoDownloader(private val context: Context) {
     /**
      * Returns true when the exception is a yt-dlp format-sort TypeError
      * ("'<' not supported between instances of 'int' and 'str'").
-     * This can occur with certain sources (e.g. YouTube Shorts / HLS streams) regardless
-     * of the yt-dlp version; the fix is to retry with a simpler format string that does
-     * not trigger the merge-sort path.
+     * This can occur with certain sources (e.g. YouTube Shorts / HLS streams) when
+     * yt-dlp tries to compare mixed-type format fields.  The recovery strategy is to
+     * retry with progressively simpler format strings, updating yt-dlp in between when
+     * both the preferred and fallback strings have already failed.
      */
     private fun isFormatSortError(e: Exception): Boolean {
         val msg = e.message ?: return false
