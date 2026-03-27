@@ -69,6 +69,16 @@ class VideoDownloader(private val context: Context) {
             addOption("--match-filter", "duration < 600 | !duration")
         }
 
+        // Omits -f entirely so yt-dlp auto-selects the format, avoiding both the
+        // "-f best" deprecation warning and the format-sort TypeError that can occur
+        // with pre-merged format strings on HLS/M3U8 streams.
+        fun buildRequestNoFormat() = YoutubeDLRequest(url).apply {
+            addOption("--merge-output-format", "mp4")
+            addOption("-o", "${outputDir.absolutePath}/%(id)s.%(ext)s")
+            addOption("--no-playlist")
+            addOption("--match-filter", "duration < 600 | !duration")
+        }
+
         // Preferred format: best video + best audio merged, capped at maxResolution.
         val preferredFormat = "bestvideo[height<=$maxResolution]+bestaudio/best[height<=$maxResolution]/best"
         // Fallback format: avoids the bestvideo+bestaudio merge which can trigger a yt-dlp
@@ -115,9 +125,9 @@ class VideoDownloader(private val context: Context) {
                             executeDownload(buildRequest(fallbackFormat))
                         } catch (e3: Exception) {
                             if (isFormatSortError(e3)) {
-                                Log.w(TAG, "Format sort error after update; retrying with plain best…")
+                                Log.w(TAG, "Format sort error after update; retrying without format selection…")
                                 outputDir.listFiles()?.forEach { it.delete() }
-                                executeDownload(buildRequest("best"))
+                                executeDownload(buildRequestNoFormat())
                             } else {
                                 throw e3
                             }
