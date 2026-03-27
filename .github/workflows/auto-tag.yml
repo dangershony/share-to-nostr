@@ -1,0 +1,56 @@
+name: Auto Tag on Main Push
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    name: Create next release tag
+    runs-on: ubuntu-latest
+    # Skip if the push was made by the bot itself (prevents any potential loops)
+    if: github.actor != 'github-actions[bot]'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Compute and push next tag
+        run: |
+          # Get the latest tag matching v* sorted by version
+          LATEST_TAG=$(git tag --list 'v*' --sort=-version:refname | head -n 1)
+
+          if [ -z "$LATEST_TAG" ]; then
+            # No existing tag, start at v0.1.0
+            NEXT_TAG="v0.1.0"
+          else
+            # Strip the leading 'v'
+            VERSION="${LATEST_TAG#v}"
+            IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
+            MAJOR=${MAJOR:-0}
+            MINOR=${MINOR:-0}
+            PATCH=${PATCH:-0}
+            # Increment patch
+            PATCH=$(( PATCH + 1 ))
+            NEXT_TAG="v${MAJOR}.${MINOR}.${PATCH}"
+          fi
+
+          echo "Latest tag: ${LATEST_TAG:-none}"
+          echo "Next tag: $NEXT_TAG"
+
+          # Check if the tag already exists (e.g. from a concurrent run)
+          if git tag --list | grep -qx "$NEXT_TAG"; then
+            echo "Tag $NEXT_TAG already exists, skipping."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "$NEXT_TAG"
+          git push origin "$NEXT_TAG"
