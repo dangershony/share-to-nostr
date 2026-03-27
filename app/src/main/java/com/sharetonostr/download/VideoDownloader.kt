@@ -100,7 +100,20 @@ class VideoDownloader(private val context: Context) {
                 Log.w(TAG, "Format sort error; retrying with simpler format selection…")
                 // Clear any partial output before retry
                 outputDir.listFiles()?.forEach { it.delete() }
-                executeDownload(buildRequest(fallbackFormat))
+                try {
+                    executeDownload(buildRequest(fallbackFormat))
+                } catch (e2: Exception) {
+                    if (isFormatSortError(e2)) {
+                        // The simpler format still triggers the sort bug — update yt-dlp
+                        // (which has this fixed in newer builds) and retry with the preferred format.
+                        Log.w(TAG, "Format sort error on fallback too; updating yt-dlp and retrying…")
+                        YoutubeDL.getInstance().updateYoutubeDL(context, YoutubeDL.UpdateChannel.NIGHTLY)
+                        outputDir.listFiles()?.forEach { it.delete() }
+                        executeDownload(buildRequest(preferredFormat))
+                    } else {
+                        throw e2
+                    }
+                }
             } else {
                 throw e
             }
