@@ -4,6 +4,10 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_run:
+    workflows: ["Auto Tag on Main Push"]
+    types:
+      - completed
   workflow_dispatch:
     inputs:
       create_release:
@@ -18,10 +22,33 @@ jobs:
   build:
     name: Build APKs
     runs-on: ubuntu-latest
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve effective tag ref
+        id: resolve_tag
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "tag_ref=$GITHUB_REF" >> "$GITHUB_OUTPUT"
+          else
+            HEAD_SHA="${{ github.event.workflow_run.head_sha }}"
+            if [ -n "$HEAD_SHA" ]; then
+              LATEST_TAG=$(git tag --points-at "$HEAD_SHA" --list 'v*' --sort=-version:refname | head -n 1)
+            fi
+            if [ -z "$LATEST_TAG" ]; then
+              LATEST_TAG=$(git tag --list 'v*' --sort=-version:refname | head -n 1)
+            fi
+            if [ -n "$LATEST_TAG" ]; then
+              echo "tag_ref=refs/tags/$LATEST_TAG" >> "$GITHUB_OUTPUT"
+            else
+              echo "tag_ref=" >> "$GITHUB_OUTPUT"
+            fi
+          fi
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -50,8 +77,9 @@ jobs:
       - name: Compute version from tag
         id: compute_version
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            TAG="${GITHUB_REF#refs/tags/v}"
+          TAG_REF="${{ steps.resolve_tag.outputs.tag_ref }}"
+          if [[ "$TAG_REF" == refs/tags/v* ]]; then
+            TAG="${TAG_REF#refs/tags/v}"
           else
             TAG="0.0.0"
           fi
@@ -126,10 +154,11 @@ jobs:
 
       - name: Get version info
         id: version
-        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && github.event.inputs.create_release == 'true')
+        if: startsWith(steps.resolve_tag.outputs.tag_ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && github.event.inputs.create_release == 'true')
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            VERSION="${GITHUB_REF#refs/tags/}"
+          TAG_REF="${{ steps.resolve_tag.outputs.tag_ref }}"
+          if [[ "$TAG_REF" == refs/tags/v* ]]; then
+            VERSION="${TAG_REF#refs/tags/}"
           else
             VERSION="v$(date +%Y%m%d-%H%M%S)"
           fi
