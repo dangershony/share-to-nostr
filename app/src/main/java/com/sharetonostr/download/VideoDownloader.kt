@@ -70,16 +70,43 @@ class VideoDownloader(private val context: Context) {
         }
 
         Log.d(TAG, "Starting download: $url")
-        YoutubeDL.getInstance().execute(request) { progress, eta, line ->
-            Log.d(TAG, "Download progress: $progress% ETA: ${eta}s [$line]")
-            onProgress(progress, eta)
+        fun executeDownload(): File {
+            YoutubeDL.getInstance().execute(request) { progress, eta, line ->
+                Log.d(TAG, "Download progress: $progress% ETA: ${eta}s [$line]")
+                onProgress(progress, eta)
+            }
+            return outputDir.listFiles()?.firstOrNull()
+                ?: throw VideoDownloadException("Download completed but no file found")
         }
 
-        val downloaded = outputDir.listFiles()?.firstOrNull()
-            ?: throw VideoDownloadException("Download completed but no file found")
-
+        val downloaded = try {
+            executeDownload()
+        } catch (e: Exception) {
+            if (isOutdatedYtDlpError(e)) {
+                Log.w(TAG, "Download failed due to outdated yt-dlp; updating and retrying…")
+                // updateYoutubeDL is a blocking network call; running inside withContext(IO) is intentional.
+                YoutubeDL.getInstance().updateYoutubeDL(context, YoutubeDL.UpdateChannel.NIGHTLY)
+                // Clear any partial output before retry
+                outputDir.listFiles()?.forEach { it.delete() }
+                executeDownload()
+            } else {
+                throw e
+            }
+        }
         Log.i(TAG, "Downloaded: ${downloaded.name} (${downloaded.length()} bytes)")
         downloaded
+    }
+
+    /**
+     * Returns true when the exception indicates the bundled yt-dlp binary is too old.
+     * In that case the download should be retried after an update.
+     */
+    private fun isOutdatedYtDlpError(e: Exception): Boolean {
+        val msg = e.message ?: return false
+        // "is older than" matches yt-dlp's own staleness warning.
+        // The 'int'/'str' comparison is a known Python TypeError in old yt-dlp versions.
+        return msg.contains("is older than") ||
+            msg.contains("not supported between instances of 'int' and 'str'")
     }
 
     /**
