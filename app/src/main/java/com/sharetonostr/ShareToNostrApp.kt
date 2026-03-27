@@ -36,6 +36,8 @@ class ShareToNostrApp : Application() {
                     FFmpeg.getInstance().init(this@ShareToNostrApp)
                     Log.i(TAG, "yt-dlp initialized successfully")
                     ytDlpReady.complete(true)
+                    // Keep yt-dlp fresh in the background so it doesn't go stale
+                    autoUpdateYtDlp()
                     return@launch
                 } catch (e: Exception) {
                     lastException = e
@@ -71,6 +73,25 @@ class ShareToNostrApp : Application() {
         private const val RETRY_DELAY_MS = 1000L
         lateinit var instance: ShareToNostrApp
             private set
+    }
+
+    /**
+     * Update yt-dlp to the latest nightly build in a background coroutine.
+     * Failures are non-fatal; they are logged but do not affect the ready state.
+     */
+    private fun autoUpdateYtDlp() {
+        applicationScope.launch(Dispatchers.IO) {
+            try {
+                Log.i(TAG, "Checking for yt-dlp updates in background…")
+                val status = YoutubeDL.getInstance().updateYoutubeDL(
+                    this@ShareToNostrApp,
+                    YoutubeDL.UpdateChannel.NIGHTLY
+                )
+                Log.i(TAG, "yt-dlp background update: $status")
+            } catch (e: Exception) {
+                Log.w(TAG, "yt-dlp background update failed (non-critical): ${e.message}")
+            }
+        }
     }
 }
 
