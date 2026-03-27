@@ -60,8 +60,8 @@ class VideoDownloader(private val context: Context) {
         // Clean up any previous downloads
         outputDir.listFiles()?.forEach { it.delete() }
 
-        val request = YoutubeDLRequest(url).apply {
-            addOption("-f", "bestvideo[height<=$maxResolution]+bestaudio/best[height<=$maxResolution]/best")
+        fun buildRequest(formatString: String) = YoutubeDLRequest(url).apply {
+            addOption("-f", formatString)
             addOption("--merge-output-format", "mp4")
             addOption("-o", "${outputDir.absolutePath}/%(id)s.%(ext)s")
             addOption("--no-playlist")
@@ -69,9 +69,16 @@ class VideoDownloader(private val context: Context) {
             addOption("--match-filter", "duration < 600 | !duration")
         }
 
+        // Preferred format: best video + best audio merged, capped at maxResolution.
+        val preferredFormat = "bestvideo[height<=$maxResolution]+bestaudio/best[height<=$maxResolution]/best"
+        // Fallback format: avoids the bestvideo+bestaudio merge which can trigger a yt-dlp
+        // format-sort bug ("'<' not supported between instances of 'int' and 'str'") on
+        // certain sources (e.g. YouTube Shorts with HLS/M3U8 formats).
+        val fallbackFormat = "best[height<=$maxResolution]/best"
+
         Log.d(TAG, "Starting download: $url")
-        fun executeDownload(): File {
-            YoutubeDL.getInstance().execute(request) { progress, eta, line ->
+        fun executeDownload(req: YoutubeDLRequest): File {
+            YoutubeDL.getInstance().execute(req) { progress, eta, line ->
                 Log.d(TAG, "Download progress: $progress% ETA: ${eta}s [$line]")
                 onProgress(progress, eta)
             }
@@ -80,7 +87,7 @@ class VideoDownloader(private val context: Context) {
         }
 
         val downloaded = try {
-            executeDownload()
+            executeDownload(buildRequest(preferredFormat))
         } catch (e: Exception) {
             if (isOutdatedYtDlpError(e)) {
                 Log.w(TAG, "Download failed due to outdated yt-dlp; updating and retrying…")
@@ -88,7 +95,12 @@ class VideoDownloader(private val context: Context) {
                 YoutubeDL.getInstance().updateYoutubeDL(context, YoutubeDL.UpdateChannel.NIGHTLY)
                 // Clear any partial output before retry
                 outputDir.listFiles()?.forEach { it.delete() }
-                executeDownload()
+                executeDownload(buildRequest(preferredFormat))
+            } else if (isFormatSortError(e)) {
+                Log.w(TAG, "Format sort error; retrying with simpler format selection…")
+                // Clear any partial output before retry
+                outputDir.listFiles()?.forEach { it.delete() }
+                executeDownload(buildRequest(fallbackFormat))
             } else {
                 throw e
             }
@@ -103,10 +115,19 @@ class VideoDownloader(private val context: Context) {
      */
     private fun isOutdatedYtDlpError(e: Exception): Boolean {
         val msg = e.message ?: return false
-        // "is older than" matches yt-dlp's own staleness warning.
-        // The 'int'/'str' comparison is a known Python TypeError in old yt-dlp versions.
-        return msg.contains("is older than") ||
-            msg.contains("not supported between instances of 'int' and 'str'")
+        return msg.contains("is older than")
+    }
+
+    /**
+     * Returns true when the exception is a yt-dlp format-sort TypeError
+     * ("'<' not supported between instances of 'int' and 'str'").
+     * This can occur with certain sources (e.g. YouTube Shorts / HLS streams) regardless
+     * of the yt-dlp version; the fix is to retry with a simpler format string that does
+     * not trigger the merge-sort path.
+     */
+    private fun isFormatSortError(e: Exception): Boolean {
+        val msg = e.message ?: return false
+        return msg.contains("not supported between instances of 'int' and 'str'")
     }
 
     /**
