@@ -60,8 +60,8 @@ class VideoDownloader(private val context: Context) {
         // Clean up any previous downloads
         outputDir.listFiles()?.forEach { it.delete() }
 
-        fun buildRequest(formatString: String) = YoutubeDLRequest(url).apply {
-            addOption("-f", formatString)
+        // Base request with options common to all download strategies.
+        fun baseRequest() = YoutubeDLRequest(url).apply {
             addOption("--merge-output-format", "mp4")
             addOption("-o", "${outputDir.absolutePath}/%(id)s.%(ext)s")
             addOption("--no-playlist")
@@ -69,15 +69,25 @@ class VideoDownloader(private val context: Context) {
             addOption("--match-filter", "duration < 600 | !duration")
         }
 
+        fun buildRequest(formatString: String) = baseRequest().apply {
+            addOption("-f", formatString)
+        }
+
         // Omits -f entirely so yt-dlp auto-selects the format, avoiding both the
         // "-f best" deprecation warning and the format-sort TypeError that can occur
         // with pre-merged format strings on HLS/M3U8 streams.
-        fun buildRequestNoFormat() = YoutubeDLRequest(url).apply {
-            addOption("--merge-output-format", "mp4")
-            addOption("-o", "${outputDir.absolutePath}/%(id)s.%(ext)s")
-            addOption("--no-playlist")
-            addOption("--match-filter", "duration < 600 | !duration")
+        fun buildRequestNoFormat() = baseRequest()
+
+        // Final fallback: also skips HLS manifest download so that yt-dlp never
+        // adds HLS format entries (whose tbr/abr fields can have inconsistent types)
+        // to its sort list, thereby preventing the format-sort TypeError entirely.
+        // Non-YouTube extractors ignore the "youtube:" prefix, so this is safe for
+        // other platforms too.
+        fun buildRequestSkipHls() = baseRequest().apply {
+            addOption("--extractor-args", "youtube:skip=hls")
         }
+
+        fun cleanOutputDir() = outputDir.listFiles()?.forEach { it.delete() }
 
         // Preferred format: best video + best audio merged, capped at maxResolution.
         val preferredFormat = "bestvideo[height<=$maxResolution]+bestaudio/best[height<=$maxResolution]/best"
@@ -104,12 +114,12 @@ class VideoDownloader(private val context: Context) {
                 // updateYoutubeDL is a blocking network call; running inside withContext(IO) is intentional.
                 YoutubeDL.getInstance().updateYoutubeDL(context, YoutubeDL.UpdateChannel.NIGHTLY)
                 // Clear any partial output before retry
-                outputDir.listFiles()?.forEach { it.delete() }
+                cleanOutputDir()
                 executeDownload(buildRequest(preferredFormat))
             } else if (isFormatSortError(e)) {
                 Log.w(TAG, "Format sort error; retrying with simpler format selection…")
                 // Clear any partial output before retry
-                outputDir.listFiles()?.forEach { it.delete() }
+                cleanOutputDir()
                 try {
                     executeDownload(buildRequest(fallbackFormat))
                 } catch (e2: Exception) {
@@ -120,14 +130,28 @@ class VideoDownloader(private val context: Context) {
                         // filter as a last resort.
                         Log.w(TAG, "Format sort error on fallback too; updating yt-dlp and retrying…")
                         YoutubeDL.getInstance().updateYoutubeDL(context, YoutubeDL.UpdateChannel.NIGHTLY)
-                        outputDir.listFiles()?.forEach { it.delete() }
+                        cleanOutputDir()
                         try {
                             executeDownload(buildRequest(fallbackFormat))
                         } catch (e3: Exception) {
                             if (isFormatSortError(e3)) {
                                 Log.w(TAG, "Format sort error after update; retrying without format selection…")
-                                outputDir.listFiles()?.forEach { it.delete() }
-                                executeDownload(buildRequestNoFormat())
+                                cleanOutputDir()
+                                try {
+                                    executeDownload(buildRequestNoFormat())
+                                } catch (e4: Exception) {
+                                    if (isFormatSortError(e4)) {
+                                        // Even with no format selection yt-dlp can fail when it
+                                        // enumerates HLS (m3u8) formats whose tbr/abr fields have
+                                        // inconsistent types.  Skipping HLS extraction removes those
+                                        // entries from the sort list and avoids the TypeError.
+                                        Log.w(TAG, "Format sort error on no-format request; retrying with HLS skip…")
+                                        cleanOutputDir()
+                                        executeDownload(buildRequestSkipHls())
+                                    } else {
+                                        throw e4
+                                    }
+                                }
                             } else {
                                 throw e3
                             }
