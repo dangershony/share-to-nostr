@@ -69,25 +69,20 @@ class VideoDownloader(private val context: Context) {
             addOption("--match-filter", "duration < 600 | !duration")
         }
 
-        fun buildRequest(formatString: String) = baseRequest().apply {
-            addOption("-f", formatString)
-        }
-
-        // Omits -f entirely so yt-dlp auto-selects the format, avoiding both the
-        // "-f best" deprecation warning and the format-sort TypeError that can occur
-        // with pre-merged format strings on HLS/M3U8 streams.
-        fun buildRequestNoFormat() = baseRequest()
-
-        // Final fallback: also skips HLS manifest download so that yt-dlp never
-        // adds HLS format entries (whose tbr/abr fields can have inconsistent types)
-        // to its sort list, thereby preventing the format-sort TypeError entirely.
-        // Non-YouTube extractors ignore the "youtube:" prefix, so this is safe for
-        // other platforms too.
-        fun buildRequestSkipHls() = baseRequest().apply {
-            addOption("--extractor-args", "youtube:skip=hls")
-        }
-
         fun cleanOutputDir() = outputDir.listFiles()?.forEach { it.delete() }
+
+        Log.d(TAG, "Starting download: $url")
+
+        fun executeDownload(req: YoutubeDLRequest): File {
+            YoutubeDL.getInstance().execute(req) { progress, eta, line ->
+                Log.d(TAG, "Download progress: $progress% ETA: ${eta}s [$line]")
+                onProgress(progress, eta)
+            }
+            val file = outputDir.listFiles()?.firstOrNull()
+                ?: throw VideoDownloadException("Download completed but no file found")
+            Log.i(TAG, "Downloaded: ${file.name} (${file.length()} bytes)")
+            return file
+        }
 
         // Preferred format: best video + best audio merged, capped at maxResolution.
         val preferredFormat = "bestvideo[height<=$maxResolution]+bestaudio/best[height<=$maxResolution]/best"
@@ -96,81 +91,88 @@ class VideoDownloader(private val context: Context) {
         // certain sources (e.g. YouTube Shorts with HLS/M3U8 formats).
         val fallbackFormat = "best[height<=$maxResolution]/best"
 
-        Log.d(TAG, "Starting download: $url")
-        fun executeDownload(req: YoutubeDLRequest): File {
-            YoutubeDL.getInstance().execute(req) { progress, eta, line ->
-                Log.d(TAG, "Download progress: $progress% ETA: ${eta}s [$line]")
-                onProgress(progress, eta)
-            }
-            return outputDir.listFiles()?.firstOrNull()
-                ?: throw VideoDownloadException("Download completed but no file found")
-        }
+        // Strategies tried in order when a format-sort TypeError occurs. Each entry is a
+        // human-readable label and a lambda that builds the YoutubeDLRequest.
+        // Progressively strips format constraints to avoid mixed-type sort comparisons:
+        //  1. preferred  – explicit best-video+best-audio merge with resolution cap
+        //  2. fallback   – single-stream "best", avoids merge that can expose sort bug
+        //  3. no format  – omit -f entirely, lets yt-dlp auto-select
+        //  4. skip HLS   – drop HLS (m3u8) entries whose tbr/abr types can be mixed
+        //  5. skip HLS+DASH – also drop DASH entries for the same reason (final resort)
+        val strategies: List<Pair<String, () -> YoutubeDLRequest>> = listOf(
+            "preferred format" to { baseRequest().apply { addOption("-f", preferredFormat) } },
+            "fallback format" to { baseRequest().apply { addOption("-f", fallbackFormat) } },
+            "no explicit format" to { baseRequest() },
+            "skip HLS" to {
+                baseRequest().apply { addOption("--extractor-args", "youtube:skip=hls") }
+            },
+            // DASH entries can also carry mixed-type tbr/abr fields. Skipping both HLS
+            // and DASH removes all problematic entries from yt-dlp's sort list.
+            // Non-YouTube extractors ignore the "youtube:" prefix, so this is safe for
+            // other platforms too.
+            "skip HLS+DASH" to {
+                baseRequest().apply { addOption("--extractor-args", "youtube:skip=hls,dash") }
+            },
+        )
 
-        val downloaded = try {
-            executeDownload(buildRequest(preferredFormat))
-        } catch (e: Exception) {
-            if (isOutdatedYtDlpError(e)) {
-                Log.w(TAG, "Download failed due to outdated yt-dlp; updating and retrying…")
-                // updateYoutubeDL is a blocking network call; running inside withContext(IO) is intentional.
-                YoutubeDL.getInstance().updateYoutubeDL(context, YoutubeDL.UpdateChannel.NIGHTLY)
-                // Clear any partial output before retry
-                cleanOutputDir()
-                executeDownload(buildRequest(preferredFormat))
-            } else if (isFormatSortError(e)) {
-                Log.w(TAG, "Format sort error; retrying with simpler format selection…")
-                // Clear any partial output before retry
-                cleanOutputDir()
-                try {
-                    executeDownload(buildRequest(fallbackFormat))
-                } catch (e2: Exception) {
-                    if (isFormatSortError(e2)) {
-                        // Both formats trigger the sort bug — update yt-dlp and retry with
-                        // the fallback format (preferred was already tried and failed).
-                        // If the fallback still fails, try a plain "best" with no resolution
-                        // filter as a last resort.
-                        Log.w(TAG, "Format sort error on fallback too; updating yt-dlp and retrying…")
+        var ytDlpUpdated = false
+        var lastFormatSortException: Exception? = null
+
+        for ((index, strategyPair) in strategies.withIndex()) {
+            val (label, buildReq) = strategyPair
+            cleanOutputDir()
+            try {
+                return@withContext executeDownload(buildReq())
+            } catch (e: Exception) {
+                when {
+                    isOutdatedYtDlpError(e) && !ytDlpUpdated -> {
+                        Log.w(TAG, "Outdated yt-dlp; updating and retrying $label…")
+                        // updateYoutubeDL is a blocking network call; running inside withContext(IO) is intentional.
                         YoutubeDL.getInstance().updateYoutubeDL(context, YoutubeDL.UpdateChannel.NIGHTLY)
+                        ytDlpUpdated = true
                         cleanOutputDir()
                         try {
-                            executeDownload(buildRequest(fallbackFormat))
-                        } catch (e3: Exception) {
-                            if (isFormatSortError(e3)) {
-                                Log.w(TAG, "Format sort error after update; retrying without format selection…")
-                                cleanOutputDir()
-                                try {
-                                    executeDownload(buildRequestNoFormat())
-                                } catch (e4: Exception) {
-                                    if (isFormatSortError(e4)) {
-                                        // Even with no format selection yt-dlp can fail when it
-                                        // enumerates HLS (m3u8) formats whose tbr/abr fields have
-                                        // inconsistent types.  Skipping HLS extraction removes those
-                                        // entries from the sort list and avoids the TypeError.
-                                        Log.w(TAG, "Format sort error on no-format request; retrying with HLS skip…")
-                                        cleanOutputDir()
-                                        executeDownload(buildRequestSkipHls())
-                                    } else {
-                                        throw e4
-                                    }
-                                }
+                            return@withContext executeDownload(buildReq())
+                        } catch (e2: Exception) {
+                            if (isFormatSortError(e2)) {
+                                Log.w(TAG, "Format sort error after yt-dlp update on $label; continuing…")
+                                lastFormatSortException = e2
                             } else {
-                                throw e3
+                                throw e2
                             }
                         }
-                    } else {
-                        throw e2
                     }
+                    isFormatSortError(e) -> {
+                        Log.w(TAG, "Format sort error on $label; trying next strategy…")
+                        lastFormatSortException = e
+                        // After both preferred and fallback format strings have failed,
+                        // update yt-dlp once — a stale binary can be the root cause.
+                        if (!ytDlpUpdated && index == 1) {
+                            Log.w(TAG, "Updating yt-dlp before continuing…")
+                            YoutubeDL.getInstance().updateYoutubeDL(
+                                context, YoutubeDL.UpdateChannel.NIGHTLY
+                            )
+                            ytDlpUpdated = true
+                            cleanOutputDir()
+                            try {
+                                return@withContext executeDownload(buildReq())
+                            } catch (e2: Exception) {
+                                if (!isFormatSortError(e2)) throw e2
+                                Log.w(TAG, "Still format sort error after update; continuing…")
+                                lastFormatSortException = e2
+                            }
+                        }
+                    }
+                    isNetworkError(e) -> throw VideoDownloadException(
+                        "Network error: Unable to reach the video host. Please check your internet connection and try again.",
+                        e
+                    )
+                    else -> throw e
                 }
-            } else if (isNetworkError(e)) {
-                throw VideoDownloadException(
-                    "Network error: Unable to reach the video host. Please check your internet connection and try again.",
-                    e
-                )
-            } else {
-                throw e
             }
         }
-        Log.i(TAG, "Downloaded: ${downloaded.name} (${downloaded.length()} bytes)")
-        downloaded
+
+        throw lastFormatSortException ?: VideoDownloadException("Download failed: all format selection strategies exhausted")
     }
 
     /**
