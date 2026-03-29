@@ -160,12 +160,33 @@ class VideoDownloader(private val context: Context) {
                         throw e2
                     }
                 }
+            } else if (isNetworkError(e)) {
+                throw VideoDownloadException(
+                    "Network error: Unable to reach the video host. Please check your internet connection and try again.",
+                    e
+                )
             } else {
                 throw e
             }
         }
         Log.i(TAG, "Downloaded: ${downloaded.name} (${downloaded.length()} bytes)")
         downloaded
+    }
+
+    /**
+     * Returns true when the exception is caused by a network or DNS failure
+     * (e.g. "No address associated with hostname", "Network is unreachable").
+     * These errors cannot be resolved by changing the format string or updating
+     * yt-dlp, so they should surface a user-friendly connectivity message.
+     */
+    private fun isNetworkError(e: Exception): Boolean {
+        val msg = e.message ?: return false
+        return msg.contains("No address associated with hostname", ignoreCase = true) ||
+                msg.contains("Network is unreachable", ignoreCase = true) ||
+                msg.contains("Unable to connect", ignoreCase = true) ||
+                msg.contains("Connection refused", ignoreCase = true) ||
+                msg.contains("Connection timed out", ignoreCase = true) ||
+                msg.contains("Failed to establish a new connection", ignoreCase = true)
     }
 
     /**
