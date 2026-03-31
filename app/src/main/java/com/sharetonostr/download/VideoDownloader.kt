@@ -98,7 +98,10 @@ class VideoDownloader(private val context: Context) {
         //  2. fallback   – single-stream "best", avoids merge that can expose sort bug
         //  3. no format  – omit -f entirely, lets yt-dlp auto-select
         //  4. skip HLS   – drop HLS (m3u8) entries whose tbr/abr types can be mixed
-        //  5. skip HLS+DASH – also drop DASH entries for the same reason (final resort)
+        //  5. skip HLS+DASH – also drop DASH entries for the same reason
+        //  6. android client – use YouTube's Android player API which returns a small set
+        //     of progressive mp4 streams with consistently-typed metadata, avoiding the
+        //     mixed-type sort bug entirely
         val strategies: List<Pair<String, () -> YoutubeDLRequest>> = listOf(
             "preferred format" to { baseRequest().apply { addOption("-f", preferredFormat) } },
             "fallback format" to { baseRequest().apply { addOption("-f", fallbackFormat) } },
@@ -112,6 +115,15 @@ class VideoDownloader(private val context: Context) {
             // other platforms too.
             "skip HLS+DASH" to {
                 baseRequest().apply { addOption("--extractor-args", "youtube:skip=hls,dash") }
+            },
+            // The Android player client requests YouTube's mobile API which returns a
+            // small set of progressive mp4 streams with consistent integer metadata.
+            // This eliminates the mixed-type sort comparison entirely and is the most
+            // reliable last resort for YouTube Shorts and similar content.
+            "android player client" to {
+                baseRequest().apply {
+                    addOption("--extractor-args", "youtube:player_client=android,skip=hls,dash")
+                }
             },
         )
 
@@ -128,7 +140,13 @@ class VideoDownloader(private val context: Context) {
                     isOutdatedYtDlpError(e) && !ytDlpUpdated -> {
                         Log.w(TAG, "Outdated yt-dlp; updating and retrying $label…")
                         // updateYoutubeDL is a blocking network call; running inside withContext(IO) is intentional.
-                        YoutubeDL.getInstance().updateYoutubeDL(context, YoutubeDL.UpdateChannel.NIGHTLY)
+                        // Wrap in try-catch so a network failure during the update does not abort the
+                        // entire download — remaining strategies can still be tried with the old binary.
+                        try {
+                            YoutubeDL.getInstance().updateYoutubeDL(context, YoutubeDL.UpdateChannel.NIGHTLY)
+                        } catch (updateEx: Exception) {
+                            Log.w(TAG, "yt-dlp update failed (non-critical): ${updateEx.message}")
+                        }
                         ytDlpUpdated = true
                         cleanOutputDir()
                         try {
@@ -149,9 +167,15 @@ class VideoDownloader(private val context: Context) {
                         // update yt-dlp once — a stale binary can be the root cause.
                         if (!ytDlpUpdated && index == 1) {
                             Log.w(TAG, "Updating yt-dlp before continuing…")
-                            YoutubeDL.getInstance().updateYoutubeDL(
-                                context, YoutubeDL.UpdateChannel.NIGHTLY
-                            )
+                            // Wrap in try-catch so a network failure during the update does
+                            // not abort the download — remaining strategies are still tried.
+                            try {
+                                YoutubeDL.getInstance().updateYoutubeDL(
+                                    context, YoutubeDL.UpdateChannel.NIGHTLY
+                                )
+                            } catch (updateEx: Exception) {
+                                Log.w(TAG, "yt-dlp update failed (non-critical): ${updateEx.message}")
+                            }
                             ytDlpUpdated = true
                             cleanOutputDir()
                             try {
