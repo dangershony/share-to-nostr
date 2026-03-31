@@ -15,4 +15,5 @@ local.properties
 *.jks
 *.keystore
 nul
-gradle/wrapper/gradle-wrapper.jar
+# gradle-wrapper.jar is intentionally committed (standard Android practice)
+# gradle/wrapper/gradle-wrapper.jar

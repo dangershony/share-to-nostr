@@ -15,6 +15,44 @@ class VideoDownloader(private val context: Context) {
 
     companion object {
         private const val TAG = "VideoDownloader"
+
+        /**
+         * Returns true when the exception is a yt-dlp format-sort TypeError
+         * ("'<' not supported between instances of 'int' and 'str'").
+         * This can occur with certain sources (e.g. YouTube Shorts / HLS streams) when
+         * yt-dlp tries to compare mixed-type format fields.  The recovery strategy is to
+         * retry with progressively simpler format strings, updating yt-dlp in between when
+         * both the preferred and fallback strings have already failed.
+         */
+        internal fun isFormatSortError(e: Exception): Boolean {
+            val msg = e.message ?: return false
+            return msg.contains("not supported between instances of 'int' and 'str'")
+        }
+
+        /**
+         * Returns true when the exception is caused by a network or DNS failure
+         * (e.g. "No address associated with hostname", "Network is unreachable").
+         * These errors cannot be resolved by changing the format string or updating
+         * yt-dlp, so they should surface a user-friendly connectivity message.
+         */
+        internal fun isNetworkError(e: Exception): Boolean {
+            val msg = e.message ?: return false
+            return msg.contains("No address associated with hostname", ignoreCase = true) ||
+                    msg.contains("Network is unreachable", ignoreCase = true) ||
+                    msg.contains("Unable to connect", ignoreCase = true) ||
+                    msg.contains("Connection refused", ignoreCase = true) ||
+                    msg.contains("Connection timed out", ignoreCase = true) ||
+                    msg.contains("Failed to establish a new connection", ignoreCase = true)
+        }
+
+        /**
+         * Returns true when the exception indicates the bundled yt-dlp binary is too old.
+         * In that case the download should be retried after an update.
+         */
+        internal fun isOutdatedYtDlpError(e: Exception): Boolean {
+            val msg = e.message ?: return false
+            return msg.contains("is older than")
+        }
     }
 
     data class VideoInfo(
@@ -197,44 +235,6 @@ class VideoDownloader(private val context: Context) {
         }
 
         throw lastFormatSortException ?: VideoDownloadException("Download failed: all format selection strategies exhausted")
-    }
-
-    /**
-     * Returns true when the exception is caused by a network or DNS failure
-     * (e.g. "No address associated with hostname", "Network is unreachable").
-     * These errors cannot be resolved by changing the format string or updating
-     * yt-dlp, so they should surface a user-friendly connectivity message.
-     */
-    private fun isNetworkError(e: Exception): Boolean {
-        val msg = e.message ?: return false
-        return msg.contains("No address associated with hostname", ignoreCase = true) ||
-                msg.contains("Network is unreachable", ignoreCase = true) ||
-                msg.contains("Unable to connect", ignoreCase = true) ||
-                msg.contains("Connection refused", ignoreCase = true) ||
-                msg.contains("Connection timed out", ignoreCase = true) ||
-                msg.contains("Failed to establish a new connection", ignoreCase = true)
-    }
-
-    /**
-     * Returns true when the exception indicates the bundled yt-dlp binary is too old.
-     * In that case the download should be retried after an update.
-     */
-    private fun isOutdatedYtDlpError(e: Exception): Boolean {
-        val msg = e.message ?: return false
-        return msg.contains("is older than")
-    }
-
-    /**
-     * Returns true when the exception is a yt-dlp format-sort TypeError
-     * ("'<' not supported between instances of 'int' and 'str'").
-     * This can occur with certain sources (e.g. YouTube Shorts / HLS streams) when
-     * yt-dlp tries to compare mixed-type format fields.  The recovery strategy is to
-     * retry with progressively simpler format strings, updating yt-dlp in between when
-     * both the preferred and fallback strings have already failed.
-     */
-    private fun isFormatSortError(e: Exception): Boolean {
-        val msg = e.message ?: return false
-        return msg.contains("not supported between instances of 'int' and 'str'")
     }
 
     /**
