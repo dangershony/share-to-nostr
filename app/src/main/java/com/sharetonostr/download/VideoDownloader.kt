@@ -2,6 +2,7 @@ package com.sharetonostr.download
 
 import android.content.Context
 import android.util.Log
+import com.sharetonostr.ShareToNostrApp
 import com.yausername.youtubedl_android.YoutubeDL
 import com.yausername.youtubedl_android.YoutubeDLRequest
 import kotlinx.coroutines.Dispatchers
@@ -31,7 +32,16 @@ class VideoDownloader(private val context: Context) {
      */
     suspend fun getVideoInfo(url: String): VideoInfo = withContext(Dispatchers.IO) {
         Log.d(TAG, "Fetching info for: $url")
-        val info = YoutubeDL.getInstance().getInfo(url)
+        val info = try {
+            YoutubeDL.getInstance().getInfo(url)
+        } catch (e: Exception) {
+            if (isCorruptYtDlpError(e) && repairYoutubeDL()) {
+                Log.w(TAG, "yt-dlp metadata lookup failed due to corruption; repaired and retrying...")
+                YoutubeDL.getInstance().getInfo(url)
+            } else {
+                throw e
+            }
+        }
         VideoInfo(
             title = info.title ?: "Untitled",
             thumbnailUrl = info.thumbnail,
@@ -113,6 +123,12 @@ class VideoDownloader(private val context: Context) {
             "skip HLS+DASH" to {
                 baseRequest().apply { addOption("--extractor-args", "youtube:skip=hls,dash") }
             },
+            "youtube web client mp4" to {
+                baseRequest().apply {
+                    addOption("--extractor-args", "youtube:player_client=web")
+                    addOption("-f", "18/best[ext=mp4]/best")
+                }
+            },
         )
 
         var ytDlpUpdated = false
@@ -125,10 +141,15 @@ class VideoDownloader(private val context: Context) {
                 return@withContext executeDownload(buildReq())
             } catch (e: Exception) {
                 when {
+                    isCorruptYtDlpError(e) -> {
+                        if (!repairYoutubeDL()) throw e
+                        cleanOutputDir()
+                        return@withContext executeDownload(buildReq())
+                    }
                     isOutdatedYtDlpError(e) && !ytDlpUpdated -> {
                         Log.w(TAG, "Outdated yt-dlp; updating and retrying $label…")
                         // updateYoutubeDL is a blocking network call; running inside withContext(IO) is intentional.
-                        YoutubeDL.getInstance().updateYoutubeDL(context, YoutubeDL.UpdateChannel.NIGHTLY)
+                        updateYoutubeDLLocked()
                         ytDlpUpdated = true
                         cleanOutputDir()
                         try {
@@ -149,9 +170,7 @@ class VideoDownloader(private val context: Context) {
                         // update yt-dlp once — a stale binary can be the root cause.
                         if (!ytDlpUpdated && index == 1) {
                             Log.w(TAG, "Updating yt-dlp before continuing…")
-                            YoutubeDL.getInstance().updateYoutubeDL(
-                                context, YoutubeDL.UpdateChannel.NIGHTLY
-                            )
+                            updateYoutubeDLLocked()
                             ytDlpUpdated = true
                             cleanOutputDir()
                             try {
@@ -200,6 +219,12 @@ class VideoDownloader(private val context: Context) {
         return msg.contains("is older than")
     }
 
+    private fun isCorruptYtDlpError(e: Exception): Boolean {
+        val msg = e.message ?: return false
+        return msg.contains("bad local file header", ignoreCase = true) ||
+                msg.contains("ZipImportError", ignoreCase = true)
+    }
+
     /**
      * Returns true when the exception is a yt-dlp format-sort TypeError
      * ("'<' not supported between instances of 'int' and 'str'").
@@ -218,15 +243,29 @@ class VideoDownloader(private val context: Context) {
      */
     suspend fun updateYtDlp(): String = withContext(Dispatchers.IO) {
         Log.i(TAG, "Updating yt-dlp...")
-        val status = YoutubeDL.getInstance().updateYoutubeDL(
-            context,
-            YoutubeDL.UpdateChannel.NIGHTLY
-        )
+        val status = updateYoutubeDLLocked()
         when (status) {
             YoutubeDL.UpdateStatus.DONE -> "yt-dlp updated successfully"
             YoutubeDL.UpdateStatus.ALREADY_UP_TO_DATE -> "yt-dlp is already up to date"
             else -> "Update status: $status"
         }
+    }
+
+    private suspend fun updateYoutubeDLLocked(): YoutubeDL.UpdateStatus {
+        val app = context.applicationContext as? ShareToNostrApp
+        val status = if (app != null) {
+            app.withYtDlpLock {
+                YoutubeDL.getInstance().updateYoutubeDL(context, YoutubeDL.UpdateChannel.NIGHTLY)
+            }
+        } else {
+            YoutubeDL.getInstance().updateYoutubeDL(context, YoutubeDL.UpdateChannel.NIGHTLY)
+        }
+        return status ?: YoutubeDL.UpdateStatus.ALREADY_UP_TO_DATE
+    }
+
+    private suspend fun repairYoutubeDL(): Boolean {
+        val app = context.applicationContext as? ShareToNostrApp ?: return false
+        return app.repairYoutubeDL()
     }
 }
 

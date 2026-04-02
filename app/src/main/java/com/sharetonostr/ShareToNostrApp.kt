@@ -2,18 +2,22 @@ package com.sharetonostr
 
 import android.app.Application
 import android.util.Log
-import com.yausername.youtubedl_android.YoutubeDL
 import com.yausername.ffmpeg.FFmpeg
+import com.yausername.youtubedl_android.YoutubeDL
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import java.io.File
 
 class ShareToNostrApp : Application() {
 
     val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val ytDlpMutex = Mutex()
 
     /** Completes when yt-dlp is ready (true = success, false = failed). */
     @Volatile
@@ -28,28 +32,33 @@ class ShareToNostrApp : Application() {
 
     private fun initYoutubeDL() {
         applicationScope.launch(Dispatchers.IO) {
-            var lastException: Exception? = null
-            for (attempt in 1..MAX_INIT_RETRIES) {
-                try {
-                    Log.i(TAG, "Initializing yt-dlp (attempt $attempt/$MAX_INIT_RETRIES)")
-                    YoutubeDL.getInstance().init(this@ShareToNostrApp)
-                    FFmpeg.getInstance().init(this@ShareToNostrApp)
-                    Log.i(TAG, "yt-dlp initialized successfully")
-                    ytDlpReady.complete(true)
-                    // Keep yt-dlp fresh in the background so it doesn't go stale
-                    autoUpdateYtDlp()
-                    return@launch
-                } catch (e: Exception) {
-                    lastException = e
-                    Log.e(TAG, "yt-dlp init attempt $attempt failed: ${e.javaClass.simpleName}: ${e.message}", e)
-                    if (attempt < MAX_INIT_RETRIES) {
-                        delay(RETRY_DELAY_MS * attempt)
-                    }
+            val initialized = withYtDlpLock { initializeYoutubeDLLocked() }
+            ytDlpReady.complete(initialized)
+            if (initialized) {
+                autoUpdateYtDlp()
+            }
+        }
+    }
+
+    private suspend fun initializeYoutubeDLLocked(): Boolean {
+        var lastException: Exception? = null
+        for (attempt in 1..MAX_INIT_RETRIES) {
+            try {
+                Log.i(TAG, "Initializing yt-dlp (attempt $attempt/$MAX_INIT_RETRIES)")
+                YoutubeDL.getInstance().init(this@ShareToNostrApp)
+                FFmpeg.getInstance().init(this@ShareToNostrApp)
+                Log.i(TAG, "yt-dlp initialized successfully")
+                return true
+            } catch (e: Exception) {
+                lastException = e
+                Log.e(TAG, "yt-dlp init attempt $attempt failed: ${e.javaClass.simpleName}: ${e.message}", e)
+                if (attempt < MAX_INIT_RETRIES) {
+                    delay(RETRY_DELAY_MS * attempt)
                 }
             }
-            Log.e(TAG, "yt-dlp initialization failed after $MAX_INIT_RETRIES attempts", lastException)
-            ytDlpReady.complete(false)
         }
+        Log.e(TAG, "yt-dlp initialization failed after $MAX_INIT_RETRIES attempts", lastException)
+        return false
     }
 
     /**
@@ -67,6 +76,19 @@ class ShareToNostrApp : Application() {
         initYoutubeDL()
     }
 
+    suspend fun repairYoutubeDL(): Boolean = withYtDlpLock {
+        Log.w(TAG, "Repairing yt-dlp installation")
+        deleteRecursively(File(noBackupFilesDir, "youtubedl-android"))
+        ytDlpReady = CompletableDeferred()
+        val initialized = initializeYoutubeDLLocked()
+        ytDlpReady.complete(initialized)
+        initialized
+    }
+
+    suspend fun <T> withYtDlpLock(block: suspend () -> T): T {
+        return ytDlpMutex.withLock { block() }
+    }
+
     companion object {
         private const val TAG = "ShareToNostr"
         private const val MAX_INIT_RETRIES = 3
@@ -82,15 +104,25 @@ class ShareToNostrApp : Application() {
     private fun autoUpdateYtDlp() {
         applicationScope.launch(Dispatchers.IO) {
             try {
-                Log.i(TAG, "Checking for yt-dlp updates in background…")
-                val status = YoutubeDL.getInstance().updateYoutubeDL(
-                    this@ShareToNostrApp,
-                    YoutubeDL.UpdateChannel.NIGHTLY
-                )
+                val status = withYtDlpLock {
+                    Log.i(TAG, "Checking for yt-dlp updates in background...")
+                    YoutubeDL.getInstance().updateYoutubeDL(
+                        this@ShareToNostrApp,
+                        YoutubeDL.UpdateChannel.NIGHTLY
+                    )
+                }
                 Log.i(TAG, "yt-dlp background update: $status")
             } catch (e: Exception) {
                 Log.w(TAG, "yt-dlp background update failed (non-critical): ${e.message}")
             }
+        }
+    }
+
+    private fun deleteRecursively(file: File) {
+        if (!file.exists()) return
+        file.listFiles()?.forEach { deleteRecursively(it) }
+        if (!file.delete()) {
+            Log.w(TAG, "Failed to delete ${file.absolutePath} during yt-dlp repair")
         }
     }
 }
