@@ -222,7 +222,8 @@ class VideoDownloader(private val context: Context) {
     private fun isCorruptYtDlpError(e: Exception): Boolean {
         val msg = e.message ?: return false
         return msg.contains("bad local file header", ignoreCase = true) ||
-                msg.contains("ZipImportError", ignoreCase = true)
+                msg.contains("ZipImportError", ignoreCase = true) ||
+                msg.contains("CANNOT LINK EXECUTABLE", ignoreCase = true)
     }
 
     /**
