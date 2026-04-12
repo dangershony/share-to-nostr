@@ -223,9 +223,7 @@ class VideoDownloader(private val context: Context) {
         val msg = e.message ?: return false
         return msg.contains("bad local file header", ignoreCase = true) ||
                 msg.contains("ZipImportError", ignoreCase = true) ||
-                msg.contains("libandroid-support.so", ignoreCase = true) ||
-                (msg.contains("CANNOT LINK EXECUTABLE", ignoreCase = true) &&
-                        msg.contains("libpython", ignoreCase = true))
+                msg.contains("libandroid-support.so", ignoreCase = true)
     }
 
     /**
