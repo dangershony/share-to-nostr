@@ -223,7 +223,13 @@ class VideoDownloader(private val context: Context) {
         val msg = e.message ?: return false
         return msg.contains("bad local file header", ignoreCase = true) ||
                 msg.contains("ZipImportError", ignoreCase = true) ||
-                msg.contains("libandroid-support.so", ignoreCase = true)
+                msg.contains("libandroid-support.so", ignoreCase = true) ||
+                // yt-dlp's bundled zip / install directory is missing or partially extracted.
+                // Triggered when the FileNotFoundError points at the youtubedl-android install
+                // path (e.g. truncated/aborted update left the binary missing). Wiping the
+                // install directory and re-initialising restores a working install.
+                (msg.contains("FileNotFoundError", ignoreCase = true) &&
+                        msg.contains("youtubedl-android", ignoreCase = true))
     }
 
     /**
