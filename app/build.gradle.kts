@@ -77,8 +77,15 @@ dependencies {
     implementation("androidx.navigation:navigation-compose:2.8.5")
 
     // yt-dlp Android wrapper
-    implementation("io.github.junkfood02.youtubedl-android:library:0.18.1")
-    implementation("io.github.junkfood02.youtubedl-android:ffmpeg:0.18.1")
+    // NOTE: pinned to 0.17.4 deliberately. Versions 0.18.0/0.18.1 ship Python 3.12
+    // and fail at runtime on real devices with:
+    //   CANNOT LINK EXECUTABLE ".../libpython.so": library "libpython3.12.so.1.0" not found
+    // See upstream yausername/youtubedl-android issue #336 and our issue #31.
+    // 0.17.4 uses Python 3.11.10 and is the last known-working release for our use case.
+    // Trade-off: 0.17.4 lacks 16 KB page-size support required for Android 15+; revisit
+    // once a fixed 0.18.x (Python 3.12.12) is published upstream.
+    implementation("io.github.junkfood02.youtubedl-android:library:0.17.4")
+    implementation("io.github.junkfood02.youtubedl-android:ffmpeg:0.17.4")
 
     // HTTP client (Blossom upload + relay WebSocket)
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
