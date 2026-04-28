@@ -234,15 +234,17 @@ class VideoDownloader(private val context: Context) {
 
     /**
      * Returns true when the exception is a yt-dlp format-sort TypeError
-     * ("'<' not supported between instances of 'int' and 'str'").
-     * This can occur with certain sources (e.g. YouTube Shorts / HLS streams) when
-     * yt-dlp tries to compare mixed-type format fields.  The recovery strategy is to
+     * ("'<' not supported between instances of 'int' and 'str'" or
+     *  "'<' not supported between instances of 'float' and 'str'").
+     * This can occur with certain sources (e.g. YouTube Shorts / HLS streams / Twitter)
+     * when yt-dlp tries to compare mixed-type format fields.  The recovery strategy is to
      * retry with progressively simpler format strings, updating yt-dlp in between when
      * both the preferred and fallback strings have already failed.
      */
     private fun isFormatSortError(e: Exception): Boolean {
         val msg = e.message ?: return false
-        return msg.contains("not supported between instances of 'int' and 'str'")
+        return msg.contains("not supported between instances of 'int' and 'str'") ||
+                msg.contains("not supported between instances of 'float' and 'str'")
     }
 
     /**
